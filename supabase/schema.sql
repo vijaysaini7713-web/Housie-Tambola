@@ -1,27 +1,36 @@
 -- Run in Supabase SQL Editor for Housie / Tambola.
 create extension if not exists pgcrypto;
 create table if not exists public.admins(user_id uuid primary key references auth.users(id) on delete cascade);
-create table if not exists public.settings(id int primary key default 1 check(id=1),event_name text not null default 'Housie / Tambola',housie_enabled boolean not null default true);
-insert into public.settings(id) values(1) on conflict do nothing;
+create table if not exists public.housie_settings(id int primary key default 1 check(id=1),event_name text not null default 'Housie / Tambola',housie_enabled boolean not null default true);
+insert into public.housie_settings(id) values(1) on conflict do nothing;
 create table if not exists public.employees(employee_id text primary key,name text not null,created_at timestamptz default now());
 create table if not exists public.housie_tickets(employee_id text primary key references public.employees(employee_id),employee_name text not null,numbers int[] not null,created_at timestamptz default now());
 create table if not exists public.housie_draws(number int primary key check(number between 1 and 90),drawn_at timestamptz default now());
 create table if not exists public.housie_claims(category text primary key check(category in ('early5','top','middle','bottom','full')),employee_id text not null references public.employees(employee_id),employee_name text not null,claimed_at timestamptz default now());
 create or replace function public.is_admin() returns boolean language sql stable security definer set search_path=public as $$select exists(select 1 from public.admins where user_id=auth.uid())$$;
 alter table public.admins enable row level security;
-alter table public.settings enable row level security;
+alter table public.housie_settings enable row level security;
 alter table public.employees enable row level security;
 alter table public.housie_tickets enable row level security;
 alter table public.housie_draws enable row level security;
 alter table public.housie_claims enable row level security;
+drop policy if exists "admins view" on public.admins;
 create policy "admins view" on public.admins for select to authenticated using(user_id=auth.uid());
-create policy "public settings" on public.settings for select to anon,authenticated using(true);
-create policy "admin settings" on public.settings for update to authenticated using(public.is_admin()) with check(public.is_admin());
+drop policy if exists "public settings" on public.housie_settings;
+create policy "public settings" on public.housie_settings for select to anon,authenticated using(true);
+drop policy if exists "admin settings" on public.housie_settings;
+create policy "admin settings" on public.housie_settings for update to authenticated using(public.is_admin()) with check(public.is_admin());
+drop policy if exists "admin employees" on public.employees;
 create policy "admin employees" on public.employees for select to authenticated using(public.is_admin());
+drop policy if exists "admin tickets" on public.housie_tickets;
 create policy "admin tickets" on public.housie_tickets for select to authenticated using(public.is_admin());
+drop policy if exists "public draws" on public.housie_draws;
 create policy "public draws" on public.housie_draws for select to anon,authenticated using(true);
+drop policy if exists "admin draws" on public.housie_draws;
 create policy "admin draws" on public.housie_draws for all to authenticated using(public.is_admin()) with check(public.is_admin());
+drop policy if exists "public claims" on public.housie_claims;
 create policy "public claims" on public.housie_claims for select to anon,authenticated using(true);
+drop policy if exists "admin claims" on public.housie_claims;
 create policy "admin claims" on public.housie_claims for all to authenticated using(public.is_admin()) with check(public.is_admin());
 create or replace function public.housie_join(p_id text,p_name text) returns jsonb language plpgsql security definer set search_path=public as $$
 declare eid text:=upper(trim(p_id));nm text:=trim(p_name);emp public.employees%rowtype;ticket int[];row1 int[];row2 int[];row3 int[];
@@ -33,7 +42,7 @@ begin
  if lower(emp.name)<>lower(nm) then raise exception 'Employee ID belongs to another name';end if;
  select numbers into ticket from public.housie_tickets where employee_id=eid;
  if ticket is null then
-  if not(select housie_enabled from public.settings where id=1) then raise exception 'New tickets are closed';end if;
+  if not(select housie_enabled from public.housie_settings where id=1) then raise exception 'New tickets are closed';end if;
   select array_agg(n order by n) into row1 from (select n from generate_series(1,30) n order by random() limit 5) a;
   select array_agg(n order by n) into row2 from (select n from generate_series(31,60) n order by random() limit 5) a;
   select array_agg(n order by n) into row3 from (select n from generate_series(61,90) n order by random() limit 5) a;
